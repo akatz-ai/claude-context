@@ -17,13 +17,16 @@ When working with Claude across multiple git worktrees, you lose access to git-i
 
 ## Installation
 
+From PyPI:
+
 ```bash
-uv tool install /path/to/claude-context
+uv tool install claude-context
 ```
 
-Or from the directory:
+Or from source:
 
 ```bash
+git clone <repository-url>
 cd claude-context
 uv tool install .
 ```
