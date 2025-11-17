@@ -38,8 +38,9 @@ uv tool install .
 cd ~/my-project
 ctx init
 
-# Create a new context
-ctx new plans/feature-implementation
+# Create a new context (any file type!)
+ctx new plans/feature-implementation.md
+ctx save scripts/setup.sh < setup.sh
 
 # List contexts for current branch
 ctx list
@@ -48,10 +49,10 @@ ctx list
 ctx list --shared
 
 # Show a context's content
-ctx show plans/feature-implementation
+ctx show plans/feature-implementation.md
 
 # Save content from stdin (useful for Claude)
-echo "Implementation plan..." | ctx save plans/feature-implementation
+echo "Implementation plan..." | ctx save plans/feature-implementation.md
 
 # Get project info
 ctx info
@@ -77,35 +78,55 @@ This creates:
 
 ### Working with Contexts
 
+**Any file type supported** - Store markdown, scripts, configs, or any file:
+
+```bash
+# Markdown files
+ctx new plans/auth-system.md
+ctx save notes/meeting.md
+
+# Shell scripts
+ctx save --shared scripts/setup.sh < setup.sh
+
+# Config files
+ctx save configs/env.json --content '{"key": "value"}'
+
+# Any file type
+cp important-doc.pdf docs/context/shared/docs/
+```
+
 **Create a new context:**
 ```bash
-ctx new plans/auth-system
+ctx new plans/auth-system.md
 # Opens in $EDITOR (nano by default)
 ```
 
 **Create a shared context (available across all branches):**
 ```bash
-ctx new --shared architecture/database
+ctx new --shared architecture/database.md
 ```
 
 **Open an existing context:**
 ```bash
-ctx open plans/auth-system
+ctx open plans/auth-system.md
 ```
 
 **Show context content (no editor, just output):**
 ```bash
-ctx show plans/auth-system
+ctx show plans/auth-system.md
 # Perfect for piping to Claude or other tools
 ```
 
 **Save content to a context:**
 ```bash
 # From stdin
-echo "New plan content" | ctx save plans/auth-system
+echo "New plan content" | ctx save plans/auth-system.md
 
 # From command line
-ctx save plans/auth-system --content "New plan content"
+ctx save plans/auth-system.md --content "New plan content"
+
+# Shell scripts
+cat setup.sh | ctx save scripts/setup.sh
 ```
 
 ### Listing Contexts
@@ -134,14 +155,18 @@ You can also work with contexts directly through the filesystem using the `docs/
 ls docs/context/branches/main/
 ls docs/context/shared/
 
-# Read a context file directly
+# Read any file type
 cat docs/context/branches/main/plans/auth-system.md
+cat docs/context/shared/scripts/setup.sh
 
 # Create/edit with your favorite editor
 vim docs/context/shared/architecture/database.md
+code docs/context/branches/main/configs/settings.json
 
-# Copy files in/out
-cp external-doc.md docs/context/branches/main/notes/
+# Copy files in/out (any file type!)
+cp external-doc.pdf docs/context/branches/main/notes/
+cp setup.sh docs/context/shared/scripts/
+cp -r templates/ docs/context/shared/
 
 # The symlink is git-ignored, so it won't pollute your repo
 ```
@@ -240,12 +265,22 @@ git remote add origin <url>
 ## Tips
 
 **Use categories to organize:**
-- `plans/` - Implementation plans
-- `decisions/` - Architecture and design decisions
-- `bugs/` - Bug investigation notes
-- `notes/` - General session notes
+- `plans/` - Implementation plans (markdown)
+- `decisions/` - Architecture and design decisions (markdown)
+- `bugs/` - Bug investigation notes (markdown)
+- `notes/` - General session notes (markdown)
+- `scripts/` - Setup scripts, utilities (shell, python, etc.)
+- `configs/` - Configuration files (json, yaml, toml, etc.)
+- `docs/` - Reference documentation (pdf, txt, etc.)
 
 Categories are freeform - create your own structure!
+
+**Any file type works:**
+- Markdown: `.md`
+- Scripts: `.sh`, `.py`, `.js`
+- Configs: `.json`, `.yaml`, `.toml`, `.env`
+- Documents: `.txt`, `.pdf`, `.docx`
+- Or anything else you need!
 
 **Claude can use ctx too:**
 

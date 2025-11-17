@@ -181,17 +181,18 @@ class ContextStorage:
         contexts = []
 
         def scan_dir(base: Path, prefix: str = '') -> List[str]:
-            """Recursively scan directory for .md files."""
+            """Recursively scan directory for all files."""
             results = []
             if not base.exists():
                 return results
 
-            for item in sorted(base.rglob('*.md')):
-                rel_path = item.relative_to(base)
-                if prefix:
-                    results.append(f"{prefix}/{rel_path}")
-                else:
-                    results.append(str(rel_path))
+            for item in sorted(base.rglob('*')):
+                if item.is_file() and item.name != '.gitkeep':
+                    rel_path = item.relative_to(base)
+                    if prefix:
+                        results.append(f"{prefix}/{rel_path}")
+                    else:
+                        results.append(str(rel_path))
             return results
 
         if all_contexts:
@@ -216,16 +217,12 @@ class ContextStorage:
         Resolve a context path to absolute filesystem path.
 
         Args:
-            context_path: Relative path like 'plans/auth' or 'plans/auth.md'
+            context_path: Relative path like 'plans/auth.md' or 'scripts/setup.sh'
             shared: If True, resolve to shared directory
 
         Returns:
             Absolute path to the context file
         """
-        # Add .md extension if not present
-        if not context_path.endswith('.md'):
-            context_path = f"{context_path}.md"
-
         if shared:
             return self._get_shared_dir() / context_path
         else:
