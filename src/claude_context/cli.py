@@ -19,6 +19,7 @@ def cmd_init(args):
         print(f"✓ Context storage initialized at: {storage.project_dir}")
         print(f"  Project: {storage.git_root}")
         print(f"  Branch: {storage._get_branch_dir().name}")
+        print(f"  Symlink: {storage.git_root}/docs/contexts → {storage.project_dir}")
 
         if warning:
             print(f"\n{warning}")

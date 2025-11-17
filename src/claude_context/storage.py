@@ -87,6 +87,39 @@ class ContextStorage:
             # No changes to commit, that's fine
             pass
 
+    def _create_symlink(self):
+        """Create a symlink in the project directory to the context storage."""
+        symlink_path = self.git_root / 'docs' / 'contexts'
+
+        # Create docs directory if it doesn't exist
+        symlink_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Remove existing symlink or directory if it exists
+        if symlink_path.is_symlink():
+            symlink_path.unlink()
+        elif symlink_path.exists():
+            # Path exists but is not a symlink - don't overwrite
+            return
+
+        # Create symlink
+        symlink_path.symlink_to(self.project_dir, target_is_directory=True)
+
+        # Update .gitignore to exclude the symlink
+        gitignore_path = self.git_root / '.gitignore'
+        gitignore_entry = 'docs/contexts\n'
+
+        if gitignore_path.exists():
+            content = gitignore_path.read_text()
+            if 'docs/contexts' not in content:
+                # Add to existing .gitignore
+                with gitignore_path.open('a') as f:
+                    if not content.endswith('\n'):
+                        f.write('\n')
+                    f.write(gitignore_entry)
+        else:
+            # Create new .gitignore
+            gitignore_path.write_text(gitignore_entry)
+
     def init(self) -> Optional[str]:
         """
         Initialize context storage for current project.
@@ -120,6 +153,9 @@ class ContextStorage:
         # Initialize git
         self._init_git()
         self._auto_commit('Initialize project contexts')
+
+        # Create symlink in project directory
+        self._create_symlink()
 
         return self.warning
 

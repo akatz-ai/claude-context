@@ -69,9 +69,11 @@ ctx init
 
 This creates:
 - Context storage at `~/.claude-contexts/<project-id>/`
+- Symlink at `docs/contexts/` → central storage (for easy access)
 - Default category directories: `plans/`, `decisions/`, `bugs/`, `notes/`
 - Metadata tracking your project
 - Git repository for version control
+- Adds `docs/contexts` to `.gitignore`
 
 ### Working with Contexts
 
@@ -123,6 +125,34 @@ ctx list --shared
 ctx list --all
 ```
 
+### Direct Access via Symlink
+
+You can also work with contexts directly through the filesystem using the `docs/contexts/` symlink:
+
+```bash
+# Browse contexts
+ls docs/contexts/branches/main/
+ls docs/contexts/shared/
+
+# Read a context file directly
+cat docs/contexts/branches/main/plans/auth-system.md
+
+# Create/edit with your favorite editor
+vim docs/contexts/shared/architecture/database.md
+
+# Copy files in/out
+cp external-doc.md docs/contexts/branches/main/notes/
+
+# The symlink is git-ignored, so it won't pollute your repo
+```
+
+**Note**: Files created directly through the symlink won't be auto-committed to the context git repo. Use `ctx save` for automatic git commits, or commit manually:
+
+```bash
+cd ~/.claude-contexts/<project-id>
+git add -A && git commit -m "Manual update"
+```
+
 ### Project Information
 
 ```bash
@@ -138,6 +168,7 @@ Shows:
 
 ## Directory Structure
 
+**Central storage** (`~/.claude-contexts/`):
 ```
 ~/.claude-contexts/
 ├── <project-hash>/
@@ -157,6 +188,15 @@ Shows:
 │       └── feature-auth/
 │           ├── plans/
 │           └── ...
+```
+
+**Project directory** (with symlink):
+```
+~/my-project/
+├── docs/
+│   └── contexts/  → symlink to ~/.claude-contexts/<project-hash>/
+├── src/
+└── ... (your project files)
 ```
 
 ## Working with Git Worktrees
