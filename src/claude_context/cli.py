@@ -181,6 +181,24 @@ def cmd_info(args):
         return 1
 
 
+def cmd_commit(args):
+    """Commit all changes in context storage."""
+    try:
+        storage = ContextStorage()
+        success, message = storage.commit_changes(args.message)
+
+        if success:
+            print(f"✓ {message}")
+            return 0
+        else:
+            print(message)
+            return 0 if "No changes" in message else 1
+
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def main():
     """Main entry point for the CLI"""
     parser = argparse.ArgumentParser(
@@ -234,6 +252,11 @@ def main():
     # info command
     info_parser = subparsers.add_parser('info', help='Display project context information')
     info_parser.set_defaults(func=cmd_info)
+
+    # commit command
+    commit_parser = subparsers.add_parser('commit', help='Commit all changes in context storage')
+    commit_parser.add_argument('message', nargs='?', help='Commit message (optional)')
+    commit_parser.set_defaults(func=cmd_commit)
 
     args = parser.parse_args()
 

@@ -56,6 +56,10 @@ ctx show plans/feature-implementation.md
 # Save content from stdin (useful for Claude)
 echo "Implementation plan..." | ctx save plans/feature-implementation.md
 
+# Manually copy files and commit them
+cp setup.sh .claude/context/shared/scripts/
+ctx commit "Added setup script"
+
 # Get project info
 ctx info
 ```
@@ -173,12 +177,32 @@ cp -r templates/ .claude/context/shared/
 # The symlink is git-ignored, so it won't pollute your repo
 ```
 
-**Note**: Files created directly through the symlink won't be auto-committed to the context git repo. Use `ctx save` for automatic git commits, or commit manually:
+**Note**: Files created directly through the symlink won't be auto-committed automatically. You have two options:
 
 ```bash
+# Option 1: Use ctx commit (recommended)
+ctx commit "Added setup scripts"
+# Or use default message
+ctx commit
+
+# Option 2: Manual git commands
 cd ~/.claude-contexts/<project-id>
 git add -A && git commit -m "Manual update"
 ```
+
+### Committing Manual Changes
+
+When you manually add/edit files via the symlink, commit them with:
+
+```bash
+# With custom message
+ctx commit "Added setup scripts and configs"
+
+# With default message
+ctx commit
+```
+
+This commits all changes in the context storage git repo.
 
 ### Project Information
 

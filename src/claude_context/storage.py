@@ -87,6 +87,65 @@ class ContextStorage:
             # No changes to commit, that's fine
             pass
 
+    def commit_changes(self, message: Optional[str] = None) -> tuple[bool, str]:
+        """
+        Commit all changes in the context storage.
+
+        Args:
+            message: Commit message. If None, uses default.
+
+        Returns:
+            Tuple of (success, output_message)
+        """
+        self.ensure_initialized()
+
+        if message is None:
+            message = "Manual update to contexts"
+
+        try:
+            # Check if there are changes
+            result = subprocess.run(
+                ['git', 'status', '--porcelain'],
+                cwd=self.project_dir,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            if not result.stdout.strip():
+                return False, "No changes to commit"
+
+            # Stage all changes
+            subprocess.run(
+                ['git', 'add', '-A'],
+                cwd=self.project_dir,
+                capture_output=True,
+                check=True
+            )
+
+            # Commit
+            subprocess.run(
+                ['git', 'commit', '-m', message],
+                cwd=self.project_dir,
+                capture_output=True,
+                check=True
+            )
+
+            # Get commit hash
+            result = subprocess.run(
+                ['git', 'rev-parse', '--short', 'HEAD'],
+                cwd=self.project_dir,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            commit_hash = result.stdout.strip()
+
+            return True, f"Committed changes as {commit_hash}"
+
+        except subprocess.CalledProcessError as e:
+            return False, f"Git error: {e}"
+
     def _create_symlink(self):
         """Create a symlink in the project directory to the context storage."""
         symlink_path = self.git_root / '.claude' / 'context'
