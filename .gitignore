@@ -8,4 +8,4 @@ dist/
 *.egg-info/
 .venv/
 venv/
-docs/context
+.claude/context

@@ -89,9 +89,9 @@ class ContextStorage:
 
     def _create_symlink(self):
         """Create a symlink in the project directory to the context storage."""
-        symlink_path = self.git_root / 'docs' / 'context'
+        symlink_path = self.git_root / '.claude' / 'context'
 
-        # Create docs directory if it doesn't exist
+        # Create .claude directory if it doesn't exist
         symlink_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Remove existing symlink or directory if it exists
@@ -106,11 +106,11 @@ class ContextStorage:
 
         # Update .gitignore to exclude the symlink
         gitignore_path = self.git_root / '.gitignore'
-        gitignore_entry = 'docs/context\n'
+        gitignore_entry = '.claude/context\n'
 
         if gitignore_path.exists():
             content = gitignore_path.read_text()
-            if 'docs/context' not in content:
+            if '.claude/context' not in content:
                 # Add to existing .gitignore
                 with gitignore_path.open('a') as f:
                     if not content.endswith('\n'):

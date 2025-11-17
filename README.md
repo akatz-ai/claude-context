@@ -70,11 +70,11 @@ ctx init
 
 This creates:
 - Context storage at `~/.claude-contexts/<project-id>/`
-- Symlink at `docs/context/` → central storage (for easy access)
+- Symlink at `.claude/context/` → central storage (for easy access)
 - Default category directories: `plans/`, `decisions/`, `bugs/`, `notes/`
 - Metadata tracking your project
 - Git repository for version control
-- Adds `docs/context` to `.gitignore`
+- Adds `.claude/context` to `.gitignore`
 
 ### Working with Contexts
 
@@ -92,7 +92,7 @@ ctx save --shared scripts/setup.sh < setup.sh
 ctx save configs/env.json --content '{"key": "value"}'
 
 # Any file type
-cp important-doc.pdf docs/context/shared/docs/
+cp important-doc.pdf .claude/context/shared/docs/
 ```
 
 **Create a new context:**
@@ -148,25 +148,25 @@ ctx list --all
 
 ### Direct Access via Symlink
 
-You can also work with contexts directly through the filesystem using the `docs/context/` symlink:
+You can also work with contexts directly through the filesystem using the `.claude/context/` symlink:
 
 ```bash
 # Browse contexts
-ls docs/context/branches/main/
-ls docs/context/shared/
+ls .claude/context/branches/main/
+ls .claude/context/shared/
 
 # Read any file type
-cat docs/context/branches/main/plans/auth-system.md
-cat docs/context/shared/scripts/setup.sh
+cat .claude/context/branches/main/plans/auth-system.md
+cat .claude/context/shared/scripts/setup.sh
 
 # Create/edit with your favorite editor
-vim docs/context/shared/architecture/database.md
-code docs/context/branches/main/configs/settings.json
+vim .claude/context/shared/architecture/database.md
+code .claude/context/branches/main/configs/settings.json
 
 # Copy files in/out (any file type!)
-cp external-doc.pdf docs/context/branches/main/notes/
-cp setup.sh docs/context/shared/scripts/
-cp -r templates/ docs/context/shared/
+cp external-doc.pdf .claude/context/branches/main/notes/
+cp setup.sh .claude/context/shared/scripts/
+cp -r templates/ .claude/context/shared/
 
 # The symlink is git-ignored, so it won't pollute your repo
 ```
@@ -218,7 +218,7 @@ Shows:
 **Project directory** (with symlink):
 ```
 ~/my-project/
-├── docs/
+├── .claude/
 │   └── context/  → symlink to ~/.claude-contexts/<project-hash>/
 ├── src/
 └── ... (your project files)
