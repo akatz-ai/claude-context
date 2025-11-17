@@ -3,8 +3,22 @@ name = "claude-context"
 version = "0.1.0"
 description = "Manage project-wide and branch-specific context documents for Claude sessions"
 readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.9"
 dependencies = []
+authors = [
+    {name = "akatz-ai", email = "katzfeyalex+akatzgh@gmail.com"}
+]
+keywords = ["claude", "claude-code", "github", "exploration", "workspace", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 
 [project.scripts]
 ctx = "claude_context.cli:main"
