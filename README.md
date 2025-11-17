@@ -11,9 +11,11 @@ When working with Claude across multiple git worktrees, you lose access to git-i
 - **Centralized storage** - Contexts stored in `~/.claude-contexts/`, outside your worktrees
 - **Branch-aware** - Automatic organization by git branch
 - **Shared contexts** - Project-wide contexts accessible from any branch
+- **Any file type** - Store `.md`, `.sh`, `.json`, `.py`, PDFs, or anything else
 - **Git-backed** - Every project's contexts are version controlled
 - **Claude-friendly** - Simple commands that both you and Claude can use
 - **Worktree-safe** - Access the same contexts from any worktree of the same project
+- **Tool-specific namespace** - Lives in `.claude/context/` (like `.github/`, `.vscode/`)
 
 ## Installation
 
