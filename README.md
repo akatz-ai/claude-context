@@ -1,0 +1,252 @@
+# claude-context
+
+Manage project-wide and branch-specific context documents for Claude sessions.
+
+## The Problem
+
+When working with Claude across multiple git worktrees, you lose access to git-ignored context documents (plans, decisions, notes) that you've created in previous sessions. This tool solves that by centralizing context storage outside your worktrees while keeping everything organized by project and branch.
+
+## Features
+
+- **Centralized storage** - Contexts stored in `~/.claude-contexts/`, outside your worktrees
+- **Branch-aware** - Automatic organization by git branch
+- **Shared contexts** - Project-wide contexts accessible from any branch
+- **Git-backed** - Every project's contexts are version controlled
+- **Claude-friendly** - Simple commands that both you and Claude can use
+- **Worktree-safe** - Access the same contexts from any worktree of the same project
+
+## Installation
+
+```bash
+uv tool install /path/to/claude-context
+```
+
+Or from the directory:
+
+```bash
+cd claude-context
+uv tool install .
+```
+
+## Quick Start
+
+```bash
+# In your git project
+cd ~/my-project
+ctx init
+
+# Create a new context
+ctx new plans/feature-implementation
+
+# List contexts for current branch
+ctx list
+
+# List shared (project-wide) contexts
+ctx list --shared
+
+# Show a context's content
+ctx show plans/feature-implementation
+
+# Save content from stdin (useful for Claude)
+echo "Implementation plan..." | ctx save plans/feature-implementation
+
+# Get project info
+ctx info
+```
+
+## Usage
+
+### Initialize a Project
+
+Run this once per project (in any worktree):
+
+```bash
+ctx init
+```
+
+This creates:
+- Context storage at `~/.claude-contexts/<project-id>/`
+- Default category directories: `plans/`, `decisions/`, `bugs/`, `notes/`
+- Metadata tracking your project
+- Git repository for version control
+
+### Working with Contexts
+
+**Create a new context:**
+```bash
+ctx new plans/auth-system
+# Opens in $EDITOR (nano by default)
+```
+
+**Create a shared context (available across all branches):**
+```bash
+ctx new --shared architecture/database
+```
+
+**Open an existing context:**
+```bash
+ctx open plans/auth-system
+```
+
+**Show context content (no editor, just output):**
+```bash
+ctx show plans/auth-system
+# Perfect for piping to Claude or other tools
+```
+
+**Save content to a context:**
+```bash
+# From stdin
+echo "New plan content" | ctx save plans/auth-system
+
+# From command line
+ctx save plans/auth-system --content "New plan content"
+```
+
+### Listing Contexts
+
+**Current branch contexts:**
+```bash
+ctx list
+```
+
+**Shared contexts only:**
+```bash
+ctx list --shared
+```
+
+**All contexts (shared + all branches):**
+```bash
+ctx list --all
+```
+
+### Project Information
+
+```bash
+ctx info
+```
+
+Shows:
+- Project ID (hash used for storage)
+- Git root path
+- Git remote URL
+- Current branch
+- Context counts
+
+## Directory Structure
+
+```
+~/.claude-contexts/
+├── <project-hash>/
+│   ├── .git/                    # Version control
+│   ├── .ctx-meta                # Project metadata
+│   ├── shared/                  # Project-wide contexts
+│   │   ├── plans/
+│   │   ├── decisions/
+│   │   ├── bugs/
+│   │   └── notes/
+│   └── branches/                # Branch-specific contexts
+│       ├── main/
+│       │   ├── plans/
+│       │   ├── decisions/
+│       │   ├── bugs/
+│       │   └── notes/
+│       └── feature-auth/
+│           ├── plans/
+│           └── ...
+```
+
+## Working with Git Worktrees
+
+```bash
+# Main project
+cd ~/my-project
+ctx init
+ctx new plans/main-plan
+
+# Create a worktree for a feature
+git worktree add ~/my-project-auth feature/auth
+cd ~/my-project-auth
+
+# Same contexts available!
+ctx list --shared              # See project-wide contexts
+ctx new plans/auth-implementation  # Create branch-specific plan
+
+# Later, merge and delete worktree
+cd ~/my-project
+git merge feature/auth
+git worktree remove ~/my-project-auth
+
+# Context preserved!
+ctx list --all                 # feature-auth contexts still there
+```
+
+## Project Identification
+
+The tool identifies projects by:
+
+1. **Git remote URL** (preferred) - Stable across clones and moves
+2. **Git root path** (fallback) - Used when no remote exists
+
+If no git remote is configured, you'll see a warning. Add one with:
+
+```bash
+git remote add origin <url>
+```
+
+## Tips
+
+**Use categories to organize:**
+- `plans/` - Implementation plans
+- `decisions/` - Architecture and design decisions
+- `bugs/` - Bug investigation notes
+- `notes/` - General session notes
+
+Categories are freeform - create your own structure!
+
+**Claude can use ctx too:**
+
+```bash
+# Ask Claude to save a plan
+ctx save plans/new-feature --content "$(claude-generated-content)"
+
+# Ask Claude to read a plan
+ctx show plans/existing-feature | claude
+```
+
+**Version control:**
+
+Each project's contexts are git-backed. You can:
+
+```bash
+cd ~/.claude-contexts/<project-id>
+git log                    # See history
+git diff                   # See recent changes
+git show HEAD~1:shared/plans/feature.md  # View old versions
+```
+
+## Environment Variables
+
+- `EDITOR` - Text editor for `ctx new` and `ctx open` (default: `nano`)
+
+## FAQ
+
+**Q: What happens if I move my project directory?**
+
+A: If you have a git remote URL configured, contexts remain accessible (projects are identified by remote URL). Without a remote, you'll create a new context store (old one remains in `~/.claude-contexts/`).
+
+**Q: Can I share contexts between machines?**
+
+A: Yes! The `~/.claude-contexts/<project-id>/` directory is a git repository. You can push it to a remote or sync via cloud storage.
+
+**Q: What if I delete a worktree?**
+
+A: Contexts are stored centrally, not in worktrees. Deleting a worktree doesn't affect your contexts.
+
+**Q: Can I use this without git?**
+
+A: No, `claude-context` requires a git repository to identify projects and branches.
+
+## License
+
+MIT
