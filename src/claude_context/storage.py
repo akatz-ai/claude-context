@@ -3,7 +3,7 @@
 import json
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 
 from .project import (
     find_git_root,
@@ -12,6 +12,10 @@ from .project import (
     sanitize_branch_name,
     get_git_remote_url
 )
+
+if TYPE_CHECKING:
+    from .index import ContextIndex
+    from .chains import ChainManager
 
 
 class ContextStorage:
@@ -24,6 +28,32 @@ class ContextStorage:
         self.project_id, self.used_remote, self.warning = get_project_identifier()
         self.project_dir = self.base_dir / self.project_id
         self.git_root = find_git_root()
+        self._index: Optional["ContextIndex"] = None
+        self._chains: Optional["ChainManager"] = None
+
+    @property
+    def index(self) -> "ContextIndex":
+        """Get or create the context index (lazy initialization)."""
+        if self._index is None:
+            from .index import ContextIndex
+            self._index = ContextIndex(self.project_dir / 'index.db')
+        return self._index
+
+    @property
+    def chains(self) -> "ChainManager":
+        """Get or create the chain manager (lazy initialization)."""
+        if self._chains is None:
+            from .chains import ChainManager
+            self._chains = ChainManager(self.index)
+        return self._chains
+
+    def _get_index_path(self) -> Path:
+        """Get path to the SQLite index database."""
+        return self.project_dir / 'index.db'
+
+    def has_index(self) -> bool:
+        """Check if the index database exists."""
+        return self._get_index_path().exists()
 
     def _get_meta_path(self) -> Path:
         """Get path to metadata file."""
@@ -308,9 +338,89 @@ class ContextStorage:
         path = self.get_context_path(context_path, shared)
         path.write_text(content)
 
+        # Update index
+        rel_path = str(path.relative_to(self.project_dir))
+        self.index.index_document(rel_path, content, self.project_dir)
+
         # Auto-commit
         scope = "shared" if shared else get_current_branch()
         self._auto_commit(f"Update {scope}: {context_path}")
+
+    def write_context_auto(
+        self,
+        content: str,
+        filename_hint: Optional[str] = None,
+        force_shared: Optional[bool] = None,
+        chain_id: Optional[str] = None,
+        auto_chain: bool = True,
+    ) -> tuple[str, "ClassificationResult", Optional[str]]:
+        """
+        Auto-classify and save content.
+
+        Args:
+            content: Document content
+            filename_hint: Optional hint for filename/type detection
+            force_shared: If set, override scope detection
+            chain_id: Explicit chain to add document to
+            auto_chain: If True, try to infer chain from content references
+
+        Returns:
+            Tuple of (saved_path, classification_result, chain_id or None)
+        """
+        from .classifier import classify_document, ClassificationResult
+
+        self.ensure_initialized()
+
+        # Classify the document
+        result = classify_document(content, filename_hint)
+
+        # Override scope if requested
+        if force_shared is not None:
+            scope = 'shared' if force_shared else 'branch'
+        else:
+            scope = result.scope
+
+        # Build the path
+        from .classifier import get_category_for_type
+        category = get_category_for_type(result.doc_type)
+
+        if scope == 'shared':
+            context_path = f"{category}/{result.suggested_filename}"
+            path = self._get_shared_dir() / category / result.suggested_filename
+        else:
+            context_path = f"{category}/{result.suggested_filename}"
+            path = self._get_branch_dir() / category / result.suggested_filename
+
+        # Ensure directory exists
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write the file
+        path.write_text(content)
+
+        # Update index with classification metadata
+        rel_path = str(path.relative_to(self.project_dir))
+        doc_id = self.index.index_document(rel_path, content, self.project_dir)
+
+        # Add extracted tags
+        for tag in result.tags:
+            self.index.add_tag(doc_id, tag, auto_generated=True)
+
+        # Handle chaining
+        assigned_chain_id = None
+        if chain_id:
+            # Explicit chain assignment
+            self.chains.add_document_to_chain(chain_id, doc_id)
+            assigned_chain_id = chain_id
+        elif auto_chain:
+            # Try to infer chain from content
+            assigned_chain_id = self.chains.auto_chain_document(
+                doc_id, content, self.project_dir
+            )
+
+        # Auto-commit
+        self._auto_commit(f"Add {result.doc_type}: {result.suggested_filename}")
+
+        return context_path, result, assigned_chain_id
 
     def get_info(self) -> dict:
         """Get information about the current context storage."""
@@ -323,7 +433,7 @@ class ContextStorage:
         branch_count = len(self.list_contexts(shared=False))
         total_count = len(self.list_contexts(all_contexts=True))
 
-        return {
+        info = {
             'project_id': self.project_id,
             'git_root': meta['git_root'],
             'git_remote': meta.get('git_remote'),
@@ -336,3 +446,38 @@ class ContextStorage:
             },
             'warning': self.warning
         }
+
+        # Add index stats if available
+        if self.has_index():
+            info['index_stats'] = self.index.get_stats()
+
+            # Add chain stats
+            active_chains = self.chains.list_chains(status='active')
+            info['chain_stats'] = {
+                'active_chains': len(active_chains),
+            }
+
+        return info
+
+    def reindex(self, force: bool = False) -> int:
+        """Reindex all documents.
+
+        Args:
+            force: If True, reindex all docs. If False, only stale ones.
+
+        Returns:
+            Number of documents indexed
+        """
+        self.ensure_initialized()
+
+        if force:
+            # Clear existing index
+            self.index.conn.execute("DELETE FROM documents")
+            self.index.conn.commit()
+
+        # Ensure fresh will scan and index all files
+        self.index.ensure_fresh(self.project_dir)
+
+        # Return count
+        cursor = self.index.conn.execute("SELECT COUNT(*) as count FROM documents")
+        return cursor.fetchone()['count']

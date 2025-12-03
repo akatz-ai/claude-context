@@ -34,28 +34,67 @@ def cmd_list(args):
     """List available contexts."""
     try:
         storage = ContextStorage()
-        contexts = storage.list_contexts(
-            shared=args.shared,
-            all_contexts=args.all
-        )
 
-        if not contexts:
-            scope = "shared" if args.shared else ("all" if args.all else "current branch")
-            print(f"No contexts found for {scope}")
-            return 0
+        # If any index filters are specified, use the index
+        use_index = any([
+            getattr(args, 'type', None),
+            getattr(args, 'tags', None),
+            getattr(args, 'since', None),
+            getattr(args, 'status', None) and args.status != 'active',
+        ])
 
-        # Print header
-        if args.all:
-            print("All contexts:")
-        elif args.shared:
-            print("Shared contexts:")
+        if use_index and storage.has_index():
+            # Ensure index is fresh
+            storage.index.ensure_fresh(storage.project_dir)
+
+            # Parse tags
+            tags = args.tags.split(',') if args.tags else None
+
+            # Get filtered results from index
+            results = storage.index.list_documents(
+                doc_type=args.type,
+                tags=tags,
+                scope='shared' if args.shared else None,
+                status=args.status or 'active',
+                since=args.since,
+                limit=100
+            )
+
+            if not results:
+                print("No documents found matching filters")
+                return 0
+
+            print(f"Documents ({len(results)} results):")
+            for doc in results:
+                type_str = f"[{doc.doc_type}]" if doc.doc_type else ""
+                tag_str = f" #{', #'.join(doc.tags[:3])}" if doc.tags else ""
+                print(f"  {doc.filename} {type_str}{tag_str}")
+                if doc.title:
+                    print(f"    {doc.title}")
         else:
-            branch = storage._get_branch_dir().name
-            print(f"Contexts for branch '{branch}':")
+            # Original behavior
+            contexts = storage.list_contexts(
+                shared=args.shared,
+                all_contexts=args.all
+            )
 
-        # Print contexts
-        for ctx in contexts:
-            print(f"  {ctx}")
+            if not contexts:
+                scope = "shared" if args.shared else ("all" if args.all else "current branch")
+                print(f"No contexts found for {scope}")
+                return 0
+
+            # Print header
+            if args.all:
+                print("All contexts:")
+            elif args.shared:
+                print("Shared contexts:")
+            else:
+                branch = storage._get_branch_dir().name
+                print(f"Contexts for branch '{branch}':")
+
+            # Print contexts
+            for ctx in contexts:
+                print(f"  {ctx}")
 
         return 0
     except (GitError, RuntimeError) as e:
@@ -143,10 +182,49 @@ def cmd_save(args):
             print("Error: No content provided. Pipe content to stdin or use --content", file=sys.stderr)
             return 1
 
-        storage.write_context(args.path, content, shared=args.shared)
+        # Auto-classify mode
+        if getattr(args, 'auto', False):
+            # Force shared if --shared flag is set
+            force_shared = True if args.shared else None
 
-        scope = "shared" if args.shared else storage._get_branch_dir().name
-        print(f"✓ Context saved: {args.path} ({scope})")
+            # Resolve chain prefix to full ID
+            chain_id_arg = getattr(args, 'chain', None)
+            resolved_chain_id = None
+            if chain_id_arg:
+                chains = storage.chains.list_chains(status='all')
+                matching = [c for c in chains if c.chain_id.startswith(chain_id_arg)]
+                if matching:
+                    resolved_chain_id = matching[0].chain_id
+                else:
+                    print(f"Warning: Chain not found: {chain_id_arg}", file=sys.stderr)
+
+            saved_path, result, chain_id = storage.write_context_auto(
+                content,
+                filename_hint=getattr(args, 'path', None),
+                force_shared=force_shared,
+                chain_id=resolved_chain_id,
+            )
+
+            print(f"✓ Auto-classified and saved:")
+            print(f"  Path: {saved_path}")
+            print(f"  Type: {result.doc_type} (confidence: {result.confidence:.0%})")
+            print(f"  Scope: {result.scope}")
+            if result.tags:
+                print(f"  Tags: {', '.join(result.tags)}")
+            if result.title:
+                print(f"  Title: {result.title}")
+            if chain_id:
+                print(f"  Chain: {chain_id[:8]}...")
+        else:
+            # Traditional save with explicit path
+            if not args.path:
+                print("Error: Path required (or use --auto for auto-classification)", file=sys.stderr)
+                return 1
+
+            storage.write_context(args.path, content, shared=args.shared)
+            scope = "shared" if args.shared else storage._get_branch_dir().name
+            print(f"✓ Context saved: {args.path} ({scope})")
+
         return 0
     except (GitError, RuntimeError) as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -171,6 +249,26 @@ def cmd_info(args):
         print(f"  Shared:         {info['context_counts']['shared']}")
         print(f"  Current Branch: {info['context_counts']['current_branch']}")
         print(f"  Total:          {info['context_counts']['total']}")
+
+        # Show index stats if available
+        if 'index_stats' in info:
+            stats = info['index_stats']
+            print()
+            print("Index Statistics:")
+            print(f"  Indexed Docs:   {stats.get('total_documents', 0)}")
+            print(f"  Total Tags:     {stats.get('total_tags', 0)}")
+            print(f"  Schema Version: {stats.get('schema_version', 'N/A')}")
+            if stats.get('by_type'):
+                print("  By Type:")
+                for doc_type, count in sorted(stats['by_type'].items()):
+                    print(f"    {doc_type}: {count}")
+
+        # Show chain stats if available
+        if 'chain_stats' in info:
+            chain_stats = info['chain_stats']
+            print()
+            print("Chain Statistics:")
+            print(f"  Active Chains:  {chain_stats.get('active_chains', 0)}")
 
         if info['warning']:
             print(f"\n{info['warning']}")
@@ -199,6 +297,346 @@ def cmd_commit(args):
         return 1
 
 
+def cmd_find(args):
+    """Full-text search across context documents."""
+    try:
+        storage = ContextStorage()
+
+        if not storage.has_index():
+            print("Index not found. Run 'ctx reindex' first.", file=sys.stderr)
+            return 1
+
+        # Ensure index is fresh
+        storage.index.ensure_fresh(storage.project_dir)
+
+        # Parse tags
+        tags = args.tags.split(',') if args.tags else None
+
+        # Search
+        results = storage.index.search(
+            query=args.query,
+            doc_type=args.type,
+            tags=tags,
+            status=args.status or 'active',
+            since=args.since,
+            limit=args.limit or 20
+        )
+
+        if not results:
+            print("No documents found matching query")
+            return 0
+
+        print(f"Search results ({len(results)} matches):")
+        for result in results:
+            type_str = f"[{result.doc_type}]" if result.doc_type else ""
+            print(f"\n  {result.filename} {type_str}")
+            if result.title:
+                print(f"  Title: {result.title}")
+            if result.snippet:
+                # Clean up snippet for display
+                snippet = result.snippet.replace('\n', ' ').strip()
+                print(f"  ...{snippet}...")
+            if result.tags:
+                print(f"  Tags: {', '.join(result.tags[:5])}")
+
+        return 0
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_reindex(args):
+    """Reindex all context documents."""
+    try:
+        storage = ContextStorage()
+
+        print("Reindexing context documents...")
+        count = storage.reindex(force=args.force)
+        print(f"✓ Indexed {count} documents")
+
+        # Show stats
+        stats = storage.index.get_stats()
+        if stats.get('by_type'):
+            print("\nBy type:")
+            for doc_type, type_count in sorted(stats['by_type'].items()):
+                print(f"  {doc_type}: {type_count}")
+
+        return 0
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_tags(args):
+    """List all tags with document counts."""
+    try:
+        storage = ContextStorage()
+
+        if not storage.has_index():
+            print("Index not found. Run 'ctx reindex' first.", file=sys.stderr)
+            return 1
+
+        tags = storage.index.get_all_tags()
+
+        if not tags:
+            print("No tags found")
+            return 0
+
+        print(f"Tags ({len(tags)} total):")
+        for tag, count in tags:
+            print(f"  #{tag} ({count})")
+
+        return 0
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_chains(args):
+    """List work chains."""
+    try:
+        storage = ContextStorage()
+
+        if not storage.has_index():
+            print("Index not found. Run 'ctx reindex' first.", file=sys.stderr)
+            return 1
+
+        status = getattr(args, 'status', 'active') or 'active'
+        chains = storage.chains.list_chains(status=status)
+
+        if not chains:
+            print(f"No {status} chains found")
+            return 0
+
+        print(f"Work Chains ({len(chains)} {status}):")
+        for chain in chains:
+            name = chain.name or chain.latest_title or "(unnamed)"
+            print(f"\n  {chain.chain_id[:8]}... [{chain.status}]")
+            print(f"    Name: {name}")
+            print(f"    Docs: {chain.doc_count}")
+            if chain.latest_title:
+                print(f"    Latest: {chain.latest_title}")
+            if chain.updated_at:
+                print(f"    Updated: {chain.updated_at[:10]}")
+
+        return 0
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_chain_start(args):
+    """Start a new work chain."""
+    try:
+        storage = ContextStorage()
+
+        if not storage.has_index():
+            print("Index not found. Run 'ctx reindex' first.", file=sys.stderr)
+            return 1
+
+        chain_id = storage.chains.create_chain(
+            name=args.name,
+            description=getattr(args, 'description', None),
+        )
+
+        print(f"✓ Created chain: {chain_id[:8]}...")
+        print(f"  Name: {args.name}")
+        print()
+        print("To add documents to this chain:")
+        print(f"  ctx save --auto --chain {chain_id[:8]}")
+
+        return 0
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_chain_show(args):
+    """Show chain details and history."""
+    try:
+        storage = ContextStorage()
+
+        if not storage.has_index():
+            print("Index not found. Run 'ctx reindex' first.", file=sys.stderr)
+            return 1
+
+        # Find chain by prefix
+        chains = storage.chains.list_chains(status='all')
+        matching = [c for c in chains if c.chain_id.startswith(args.chain_id)]
+
+        if not matching:
+            print(f"Chain not found: {args.chain_id}", file=sys.stderr)
+            return 1
+
+        if len(matching) > 1:
+            print(f"Multiple chains match '{args.chain_id}':", file=sys.stderr)
+            for c in matching:
+                print(f"  {c.chain_id}", file=sys.stderr)
+            return 1
+
+        chain = matching[0]
+        docs = storage.chains.get_chain_documents(chain.chain_id)
+
+        print(f"Chain: {chain.chain_id}")
+        print("=" * 50)
+        print(f"Name:    {chain.name or '(unnamed)'}")
+        print(f"Status:  {chain.status}")
+        print(f"Created: {chain.created_at[:10] if chain.created_at else 'N/A'}")
+        print(f"Updated: {chain.updated_at[:10] if chain.updated_at else 'N/A'}")
+        print()
+        print(f"Documents ({len(docs)}):")
+        for i, doc in enumerate(docs, 1):
+            prefix = "└─" if i == len(docs) else "├─"
+            title = doc.title or doc.filename
+            print(f"  {prefix} {title}")
+            if doc.summary:
+                print(f"     {doc.summary[:60]}...")
+
+        return 0
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_continue(args):
+    """Get the latest document in a chain for continuation."""
+    try:
+        storage = ContextStorage()
+
+        if not storage.has_index():
+            print("Index not found. Run 'ctx reindex' first.", file=sys.stderr)
+            return 1
+
+        # Ensure index is fresh
+        storage.index.ensure_fresh(storage.project_dir)
+
+        # Parse tags
+        tags = args.tags.split(',') if args.tags else None
+
+        # Find chain by prefix if specified
+        chain_id = None
+        if args.chain:
+            chains = storage.chains.list_chains(status='all')
+            matching = [c for c in chains if c.chain_id.startswith(args.chain)]
+            if matching:
+                chain_id = matching[0].chain_id
+
+        # Get latest document
+        doc = storage.chains.get_latest_in_chain(chain_id=chain_id, tags=tags)
+
+        if not doc:
+            if chain_id:
+                print("No documents found in chain", file=sys.stderr)
+            elif tags:
+                print(f"No chained documents found with tags: {', '.join(tags)}", file=sys.stderr)
+            else:
+                print("No chained documents found", file=sys.stderr)
+            return 1
+
+        if args.path_only:
+            print(doc.filename)
+        else:
+            print(f"Continue from: {doc.filename}")
+            if doc.title:
+                print(f"Title: {doc.title}")
+            if doc.summary:
+                print(f"Summary: {doc.summary[:100]}...")
+            if doc.created_at:
+                print(f"Created: {doc.created_at[:10]}")
+
+        return 0
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_classify(args):
+    """Preview auto-classification of content (without saving)."""
+    try:
+        from .classifier import classify_document, suggest_improvements
+
+        # Read content from stdin or file
+        if args.file:
+            content = Path(args.file).read_text()
+            filename_hint = Path(args.file).name
+        elif not sys.stdin.isatty():
+            content = sys.stdin.read()
+            filename_hint = None
+        else:
+            print("Error: Provide content via stdin or --file", file=sys.stderr)
+            return 1
+
+        result = classify_document(content, filename_hint)
+
+        print("Classification Result:")
+        print("=" * 50)
+        print(f"Type:       {result.doc_type} (confidence: {result.confidence:.0%})")
+        print(f"Scope:      {result.scope}")
+        print(f"Filename:   {result.suggested_filename}")
+        print(f"Path:       {result.suggested_path}")
+
+        if result.title:
+            print(f"Title:      {result.title}")
+        if result.summary:
+            print(f"Summary:    {result.summary[:100]}...")
+        if result.tags:
+            print(f"Tags:       {', '.join(result.tags)}")
+
+        # Show suggestions for improvement
+        suggestions = suggest_improvements(content, result)
+        if suggestions:
+            print()
+            print("Suggestions:")
+            for i, suggestion in enumerate(suggestions, 1):
+                print(f"  {i}. {suggestion}")
+
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_last(args):
+    """Get the most recent document, optionally filtered by type."""
+    try:
+        storage = ContextStorage()
+
+        if not storage.has_index():
+            print("Index not found. Run 'ctx reindex' first.", file=sys.stderr)
+            return 1
+
+        # Ensure index is fresh
+        storage.index.ensure_fresh(storage.project_dir)
+
+        results = storage.index.list_documents(
+            doc_type=args.type,
+            status='active',
+            limit=1
+        )
+
+        if not results:
+            print("No documents found", file=sys.stderr)
+            return 1
+
+        doc = results[0]
+        if args.path_only:
+            # Output just the path for scripting
+            print(doc.filename)
+        else:
+            print(f"Latest: {doc.filename}")
+            if doc.title:
+                print(f"Title: {doc.title}")
+            if doc.doc_type:
+                print(f"Type: {doc.doc_type}")
+            if doc.created_at:
+                print(f"Created: {doc.created_at}")
+
+        return 0
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def main():
     """Main entry point for the CLI"""
     parser = argparse.ArgumentParser(
@@ -222,6 +660,11 @@ def main():
     list_parser = subparsers.add_parser('list', help='List available contexts')
     list_parser.add_argument('--shared', action='store_true', help='List only shared contexts')
     list_parser.add_argument('--all', action='store_true', help='List all contexts (shared + all branches)')
+    list_parser.add_argument('--type', '-t', help='Filter by document type (session, plan, decision, etc.)')
+    list_parser.add_argument('--tags', help='Filter by tags (comma-separated)')
+    list_parser.add_argument('--since', help='Filter by date (ISO format: YYYY-MM-DD)')
+    list_parser.add_argument('--status', choices=['active', 'archived', 'superseded', 'all'], default='active',
+                            help='Filter by status (default: active)')
     list_parser.set_defaults(func=cmd_list)
 
     # new command
@@ -244,9 +687,12 @@ def main():
 
     # save command
     save_parser = subparsers.add_parser('save', help='Save content to a context file')
-    save_parser.add_argument('path', help='Context path')
+    save_parser.add_argument('path', nargs='?', help='Context path (optional with --auto)')
     save_parser.add_argument('--shared', action='store_true', help='Save to shared contexts')
     save_parser.add_argument('--content', help='Content to save (or use stdin)')
+    save_parser.add_argument('--auto', '-a', action='store_true',
+                            help='Auto-classify: detect type, generate filename, extract tags')
+    save_parser.add_argument('--chain', help='Add to specified chain (use chain ID prefix)')
     save_parser.set_defaults(func=cmd_save)
 
     # info command
@@ -258,10 +704,75 @@ def main():
     commit_parser.add_argument('message', nargs='?', help='Commit message (optional)')
     commit_parser.set_defaults(func=cmd_commit)
 
+    # find command (new in v2)
+    find_parser = subparsers.add_parser('find', help='Full-text search across context documents')
+    find_parser.add_argument('query', help='Search query (supports FTS5 syntax)')
+    find_parser.add_argument('--type', '-t', help='Filter by document type')
+    find_parser.add_argument('--tags', help='Filter by tags (comma-separated)')
+    find_parser.add_argument('--since', help='Filter by date (ISO format: YYYY-MM-DD)')
+    find_parser.add_argument('--status', choices=['active', 'archived', 'superseded', 'all'], default='active',
+                            help='Filter by status (default: active)')
+    find_parser.add_argument('--limit', '-n', type=int, default=20, help='Maximum results (default: 20)')
+    find_parser.set_defaults(func=cmd_find)
+
+    # reindex command (new in v2)
+    reindex_parser = subparsers.add_parser('reindex', help='Reindex all context documents')
+    reindex_parser.add_argument('--force', '-f', action='store_true', help='Force full reindex (ignore cached)')
+    reindex_parser.set_defaults(func=cmd_reindex)
+
+    # tags command (new in v2)
+    tags_parser = subparsers.add_parser('tags', help='List all tags with document counts')
+    tags_parser.set_defaults(func=cmd_tags)
+
+    # last command (new in v2)
+    last_parser = subparsers.add_parser('last', help='Get the most recent document')
+    last_parser.add_argument('--type', '-t', help='Filter by document type')
+    last_parser.add_argument('--path-only', '-p', action='store_true', help='Output only the path (for scripting)')
+    last_parser.set_defaults(func=cmd_last)
+
+    # classify command (new in v2)
+    classify_parser = subparsers.add_parser('classify', help='Preview auto-classification without saving')
+    classify_parser.add_argument('--file', '-f', help='File to classify (or use stdin)')
+    classify_parser.set_defaults(func=cmd_classify)
+
+    # chains command (new in v2 - Phase 3)
+    chains_parser = subparsers.add_parser('chains', help='List work chains')
+    chains_parser.add_argument('--status', '-s', choices=['active', 'completed', 'abandoned', 'all'],
+                              default='active', help='Filter by status (default: active)')
+    chains_parser.set_defaults(func=cmd_chains)
+
+    # chain subcommands
+    chain_parser = subparsers.add_parser('chain', help='Chain management commands')
+    chain_subparsers = chain_parser.add_subparsers(dest='chain_command', help='Chain commands')
+
+    # chain start
+    chain_start_parser = chain_subparsers.add_parser('start', help='Start a new work chain')
+    chain_start_parser.add_argument('name', help='Chain name')
+    chain_start_parser.add_argument('--description', '-d', help='Chain description')
+    chain_start_parser.set_defaults(func=cmd_chain_start)
+
+    # chain show
+    chain_show_parser = chain_subparsers.add_parser('show', help='Show chain details')
+    chain_show_parser.add_argument('chain_id', help='Chain ID (or prefix)')
+    chain_show_parser.set_defaults(func=cmd_chain_show)
+
+    # continue command (new in v2 - Phase 3)
+    continue_parser = subparsers.add_parser('continue', help='Get latest document in a chain')
+    continue_parser.add_argument('--chain', '-c', help='Specific chain ID (or prefix)')
+    continue_parser.add_argument('--tags', '-t', help='Filter by tags (comma-separated)')
+    continue_parser.add_argument('--path-only', '-p', action='store_true',
+                                help='Output only the path (for scripting)')
+    continue_parser.set_defaults(func=cmd_continue)
+
     args = parser.parse_args()
 
     if not args.command:
         parser.print_help()
+        return 1
+
+    # Handle chain subcommand
+    if args.command == 'chain' and not getattr(args, 'chain_command', None):
+        chain_parser.print_help()
         return 1
 
     try:
