@@ -337,9 +337,27 @@ class ContextStorage:
         return path
 
     def read_context(self, context_path: str, shared: bool = False) -> str:
-        """Read a context file."""
+        """Read a context file.
+
+        Args:
+            context_path: Path to context file. Can be:
+                - Full path from list: "shared/plans/foo.md" or "branches/main/notes/bar.md"
+                - Relative path: "plans/foo.md" (uses shared flag to determine location)
+            shared: If True and path doesn't start with shared/branches, look in shared/
+        """
         self.ensure_initialized()
-        path = self._resolve_path(context_path, shared)
+
+        # Auto-detect scope from path prefix
+        if context_path.startswith('shared/'):
+            # Full path to shared doc
+            path = self.project_dir / context_path
+        elif context_path.startswith('branches/'):
+            # Full path to branch doc
+            path = self.project_dir / context_path
+        else:
+            # Relative path - use shared flag
+            path = self._resolve_path(context_path, shared)
+
         if not path.exists():
             raise FileNotFoundError(f"Context not found: {context_path}")
         return path.read_text()
