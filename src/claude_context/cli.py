@@ -637,6 +637,236 @@ def cmd_last(args):
         return 1
 
 
+# =============================================================================
+# Phase 4: Commit Integration Commands
+# =============================================================================
+
+
+def cmd_show_commits(args):
+    """Show commits linked to a context document."""
+    try:
+        storage = ContextStorage()
+
+        if not storage.has_index():
+            print("Index not found. Run 'ctx reindex' first.", file=sys.stderr)
+            return 1
+
+        # Find the document
+        doc = storage.index.get_document_by_filename_or_id(args.doc)
+        if not doc:
+            print(f"Document not found: {args.doc}", file=sys.stderr)
+            return 1
+
+        # Get linked commits
+        commits = storage.git_integration.get_commits_for_doc(doc['id'])
+
+        if not commits:
+            print(f"No commits linked to: {doc['filename']}")
+            return 0
+
+        print(f"Commits linked to: {doc['filename']}")
+        if doc.get('title'):
+            print(f"Title: {doc['title']}")
+        print("=" * 50)
+
+        for ref in commits:
+            print(f"\n  {ref.commit_hash[:8]} [{ref.ref_type}]")
+            if ref.commit_message:
+                print(f"    {ref.commit_message}")
+            if ref.created_at:
+                print(f"    Linked: {ref.created_at[:10]}")
+
+        return 0
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_show_context(args):
+    """Show context documents linked to a code commit."""
+    try:
+        storage = ContextStorage()
+
+        if not storage.has_index():
+            print("Index not found. Run 'ctx reindex' first.", file=sys.stderr)
+            return 1
+
+        # Get commit info
+        commit_info = storage.git_integration.get_commit_info(args.commit)
+        if not commit_info:
+            print(f"Commit not found: {args.commit}", file=sys.stderr)
+            return 1
+
+        # Get linked documents
+        docs = storage.git_integration.get_docs_for_commit(args.commit)
+
+        print(f"Commit: {commit_info.short_hash}")
+        print(f"Message: {commit_info.message}")
+        print(f"Author: {commit_info.author}")
+        print(f"Date: {commit_info.date.strftime('%Y-%m-%d %H:%M')}")
+        print("=" * 50)
+
+        if not docs:
+            print("\nNo context documents linked to this commit")
+            # Suggest finding related documents
+            print("\nTo link a document to this commit:")
+            print(f"  ctx link <doc> {commit_info.short_hash}")
+            return 0
+
+        print(f"\nLinked Documents ({len(docs)}):")
+        for ref in docs:
+            print(f"\n  {ref.doc_filename} [{ref.ref_type}]")
+            if ref.doc_title:
+                print(f"    Title: {ref.doc_title}")
+
+            # Show ctx:// URI
+            from .git_integration import create_ctx_uri
+            uri = create_ctx_uri(storage.project_id, doc_id=ref.doc_id)
+            print(f"    URI: {uri}")
+
+        return 0
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_link(args):
+    """Link a context document to a code commit."""
+    try:
+        storage = ContextStorage()
+
+        if not storage.has_index():
+            print("Index not found. Run 'ctx reindex' first.", file=sys.stderr)
+            return 1
+
+        # Find the document
+        doc = storage.index.get_document_by_filename_or_id(args.doc)
+        if not doc:
+            print(f"Document not found: {args.doc}", file=sys.stderr)
+            return 1
+
+        # Verify commit exists
+        commit_info = storage.git_integration.get_commit_info(args.commit)
+        if not commit_info:
+            print(f"Commit not found: {args.commit}", file=sys.stderr)
+            return 1
+
+        # Create the link
+        ref_type = getattr(args, 'type', None) or 'documents'
+        storage.git_integration.link_commit_to_doc(
+            doc_id=doc['id'],
+            commit_hash=commit_info.hash,
+            ref_type=ref_type,
+            commit_message=commit_info.message
+        )
+
+        # Show ctx:// URI
+        from .git_integration import create_ctx_uri
+        uri = create_ctx_uri(storage.project_id, doc_id=doc['id'])
+
+        print(f"✓ Linked document to commit")
+        print(f"  Document: {doc['filename']}")
+        print(f"  Commit: {commit_info.short_hash} - {commit_info.message}")
+        print(f"  Type: {ref_type}")
+        print(f"  URI: {uri}")
+
+        return 0
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_links(args):
+    """List all commit<->document links."""
+    try:
+        storage = ContextStorage()
+
+        if not storage.has_index():
+            print("Index not found. Run 'ctx reindex' first.", file=sys.stderr)
+            return 1
+
+        # Get all links
+        refs = storage.git_integration.get_all_commit_refs(limit=args.limit or 50)
+
+        if not refs:
+            print("No commit links found")
+            print("\nTo link a document to a commit:")
+            print("  ctx link <doc> <commit>")
+            return 0
+
+        print(f"Commit Links ({len(refs)} total):")
+        print("=" * 50)
+
+        for ref in refs:
+            print(f"\n  {ref.commit_hash[:8]} ↔ {ref.doc_filename}")
+            print(f"    Type: {ref.ref_type}")
+            if ref.commit_message:
+                print(f"    Commit: {ref.commit_message[:50]}...")
+            if ref.doc_title:
+                print(f"    Doc: {ref.doc_title[:50]}")
+
+        return 0
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_uri(args):
+    """Generate or resolve a ctx:// URI."""
+    try:
+        storage = ContextStorage()
+
+        if not storage.has_index():
+            print("Index not found. Run 'ctx reindex' first.", file=sys.stderr)
+            return 1
+
+        # Check if input is a ctx:// URI to resolve
+        if args.input.startswith('ctx://'):
+            # Resolve URI
+            doc = storage.git_integration.resolve_ctx_uri(args.input)
+            if not doc:
+                print(f"Could not resolve URI: {args.input}", file=sys.stderr)
+                return 1
+
+            print(f"Resolved: {args.input}")
+            print("=" * 50)
+            print(f"Filename: {doc['filename']}")
+            if doc.get('title'):
+                print(f"Title: {doc['title']}")
+            if doc.get('doc_type'):
+                print(f"Type: {doc['doc_type']}")
+            if doc.get('summary'):
+                print(f"Summary: {doc['summary'][:100]}...")
+
+            if args.show_content:
+                print()
+                print("Content:")
+                print("-" * 50)
+                print(doc.get('full_content', ''))
+        else:
+            # Generate URI for document
+            doc = storage.index.get_document_by_filename_or_id(args.input)
+            if not doc:
+                print(f"Document not found: {args.input}", file=sys.stderr)
+                return 1
+
+            from .git_integration import create_ctx_uri
+            uri = create_ctx_uri(storage.project_id, doc_id=doc['id'])
+
+            if args.verbose:
+                print(f"Document: {doc['filename']}")
+                if doc.get('title'):
+                    print(f"Title: {doc['title']}")
+                print(f"URI: {uri}")
+            else:
+                print(uri)
+
+        return 0
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def main():
     """Main entry point for the CLI"""
     parser = argparse.ArgumentParser(
@@ -763,6 +993,43 @@ def main():
     continue_parser.add_argument('--path-only', '-p', action='store_true',
                                 help='Output only the path (for scripting)')
     continue_parser.set_defaults(func=cmd_continue)
+
+    # =========================================================================
+    # Phase 4: Commit Integration Commands
+    # =========================================================================
+
+    # show-commits command: show commits linked to a document
+    show_commits_parser = subparsers.add_parser('show-commits',
+                                                 help='Show commits linked to a context document')
+    show_commits_parser.add_argument('doc', help='Document filename or ID')
+    show_commits_parser.set_defaults(func=cmd_show_commits)
+
+    # show-context command: show documents linked to a commit
+    show_context_parser = subparsers.add_parser('show-context',
+                                                 help='Show context documents for a code commit')
+    show_context_parser.add_argument('commit', help='Git commit hash (full or short)')
+    show_context_parser.set_defaults(func=cmd_show_context)
+
+    # link command: link a document to a commit
+    link_parser = subparsers.add_parser('link', help='Link a context document to a code commit')
+    link_parser.add_argument('doc', help='Document filename or ID')
+    link_parser.add_argument('commit', help='Git commit hash')
+    link_parser.add_argument('--type', '-t', choices=['informed_by', 'implements', 'documents'],
+                            default='documents', help='Type of link (default: documents)')
+    link_parser.set_defaults(func=cmd_link)
+
+    # links command: list all links
+    links_parser = subparsers.add_parser('links', help='List all commit<->document links')
+    links_parser.add_argument('--limit', '-n', type=int, default=50, help='Maximum results')
+    links_parser.set_defaults(func=cmd_links)
+
+    # uri command: generate or resolve ctx:// URIs
+    uri_parser = subparsers.add_parser('uri', help='Generate or resolve ctx:// URIs')
+    uri_parser.add_argument('input', help='Document filename/ID (to generate) or ctx:// URI (to resolve)')
+    uri_parser.add_argument('--verbose', '-v', action='store_true', help='Show full document info')
+    uri_parser.add_argument('--content', dest='show_content', action='store_true',
+                           help='Show document content when resolving')
+    uri_parser.set_defaults(func=cmd_uri)
 
     args = parser.parse_args()
 

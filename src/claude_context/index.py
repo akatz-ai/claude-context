@@ -269,6 +269,43 @@ class ContextIndex:
         row = cursor.fetchone()
         return dict(row) if row else None
 
+    def get_document_by_id(self, doc_id: str) -> Optional[Dict[str, Any]]:
+        """Get document metadata by ID."""
+        cursor = self.conn.execute(
+            "SELECT * FROM documents WHERE id = ?",
+            (doc_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def get_document_by_filename_or_id(self, identifier: str) -> Optional[Dict[str, Any]]:
+        """Get document by filename or ID (tries both).
+
+        Args:
+            identifier: Either a document ID (UUID) or filename
+
+        Returns:
+            Document dict or None
+        """
+        # Try as ID first (UUIDs have specific format)
+        if len(identifier) == 36 and '-' in identifier:
+            doc = self.get_document_by_id(identifier)
+            if doc:
+                return doc
+
+        # Try as filename
+        doc = self.get_document_by_filename(identifier)
+        if doc:
+            return doc
+
+        # Try partial ID match
+        cursor = self.conn.execute(
+            "SELECT * FROM documents WHERE id LIKE ?",
+            (f"{identifier}%",)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
     def ensure_fresh(self, project_dir: Path):
         """Check for stale documents and reindex as needed.
 

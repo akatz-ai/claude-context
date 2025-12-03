@@ -16,6 +16,7 @@ from .project import (
 if TYPE_CHECKING:
     from .index import ContextIndex
     from .chains import ChainManager
+    from .git_integration import GitIntegration
 
 
 class ContextStorage:
@@ -30,6 +31,7 @@ class ContextStorage:
         self.git_root = find_git_root()
         self._index: Optional["ContextIndex"] = None
         self._chains: Optional["ChainManager"] = None
+        self._git_integration: Optional["GitIntegration"] = None
 
     @property
     def index(self) -> "ContextIndex":
@@ -46,6 +48,16 @@ class ContextStorage:
             from .chains import ChainManager
             self._chains = ChainManager(self.index)
         return self._chains
+
+    @property
+    def git_integration(self) -> "GitIntegration":
+        """Get or create the git integration manager (lazy initialization)."""
+        if self._git_integration is None:
+            from .git_integration import GitIntegration
+            self._git_integration = GitIntegration(
+                self.index, self.project_id, self.project_dir, self.git_root
+            )
+        return self._git_integration
 
     def _get_index_path(self) -> Path:
         """Get path to the SQLite index database."""
