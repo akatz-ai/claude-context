@@ -867,6 +867,137 @@ def cmd_uri(args):
         return 1
 
 
+# =============================================================================
+# Phase 5: Migration Commands
+# =============================================================================
+
+
+def cmd_backup(args):
+    """Create a backup of the context storage."""
+    try:
+        storage = ContextStorage()
+        storage.ensure_initialized()
+
+        from .migration import MigrationManager, get_storage_stats
+
+        manager = MigrationManager(storage.project_dir)
+
+        # Get stats first
+        stats = get_storage_stats(storage.project_dir)
+        print(f"Creating backup of {stats['total_files']} files...")
+
+        # Determine output path
+        output_path = Path(args.output) if args.output else None
+        compress = not args.no_compress
+
+        result = manager.create_backup(output_path=output_path, compress=compress)
+
+        if result.success:
+            size_mb = result.size_bytes / (1024 * 1024)
+            print(f"✓ Backup created successfully")
+            print(f"  Path: {result.backup_path}")
+            print(f"  Files: {result.file_count}")
+            print(f"  Size: {size_mb:.2f} MB")
+            return 0
+        else:
+            print("Failed to create backup", file=sys.stderr)
+            return 1
+
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_migrate(args):
+    """Migrate context storage to v2 format."""
+    try:
+        storage = ContextStorage()
+
+        from .migration import MigrationManager, detect_version, get_storage_stats
+
+        manager = MigrationManager(storage.project_dir)
+
+        # Check current version
+        version = detect_version(storage.project_dir)
+        print(f"Current version: {version}")
+
+        if version == "uninitialized":
+            print("Context storage not initialized. Run 'ctx init' first.", file=sys.stderr)
+            return 1
+
+        # Get stats
+        stats = get_storage_stats(storage.project_dir)
+        print(f"Files to process: {stats['total_files']}")
+
+        if args.dry_run:
+            print("\n[DRY RUN - no changes will be made]\n")
+
+        # Run migration
+        result = manager.migrate(dry_run=args.dry_run, verbose=args.verbose)
+
+        print()
+        print("Migration Result:")
+        print("=" * 50)
+        print(f"Version: {result.version_before} → {result.version_after}")
+        print(f"Files indexed: {result.files_indexed}")
+        print(f"Chains created: {result.chains_created}")
+
+        if result.warnings:
+            print("\nWarnings:")
+            for warning in result.warnings:
+                print(f"  ⚠ {warning}")
+
+        if result.errors:
+            print("\nErrors:")
+            for error in result.errors:
+                print(f"  ✗ {error}")
+            return 1
+
+        if not args.dry_run:
+            print("\n✓ Migration completed successfully")
+
+        return 0
+
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_version(args):
+    """Show context storage version and stats."""
+    try:
+        storage = ContextStorage()
+
+        from .migration import detect_version, get_storage_stats
+
+        version = detect_version(storage.project_dir)
+        stats = get_storage_stats(storage.project_dir)
+
+        print(f"Context Storage Version: {version}")
+        print("=" * 50)
+        print(f"Storage path: {storage.project_dir}")
+        print(f"Total files: {stats['total_files']}")
+
+        size_mb = stats['total_size_bytes'] / (1024 * 1024)
+        print(f"Total size: {size_mb:.2f} MB")
+
+        if stats['by_extension']:
+            print("\nBy extension:")
+            for ext, count in sorted(stats['by_extension'].items(), key=lambda x: -x[1]):
+                print(f"  {ext}: {count}")
+
+        if stats['by_directory']:
+            print("\nBy directory:")
+            for dir_name, count in sorted(stats['by_directory'].items(), key=lambda x: -x[1]):
+                print(f"  {dir_name}/: {count}")
+
+        return 0
+
+    except (GitError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def main():
     """Main entry point for the CLI"""
     parser = argparse.ArgumentParser(
@@ -1030,6 +1161,29 @@ def main():
     uri_parser.add_argument('--content', dest='show_content', action='store_true',
                            help='Show document content when resolving')
     uri_parser.set_defaults(func=cmd_uri)
+
+    # =========================================================================
+    # Phase 5: Migration Commands
+    # =========================================================================
+
+    # backup command: create backup of context storage
+    backup_parser = subparsers.add_parser('backup', help='Create a backup of context storage')
+    backup_parser.add_argument('--output', '-o', help='Output path (default: auto-generated in parent dir)')
+    backup_parser.add_argument('--no-compress', action='store_true',
+                              help='Create directory copy instead of .tar.gz')
+    backup_parser.set_defaults(func=cmd_backup)
+
+    # migrate command: migrate to v2 format
+    migrate_parser = subparsers.add_parser('migrate', help='Migrate context storage to v2 format')
+    migrate_parser.add_argument('--dry-run', '-n', action='store_true',
+                               help='Show what would be done without making changes')
+    migrate_parser.add_argument('--verbose', '-v', action='store_true',
+                               help='Show detailed progress')
+    migrate_parser.set_defaults(func=cmd_migrate)
+
+    # version command: show storage version and stats
+    version_parser = subparsers.add_parser('storage-version', help='Show context storage version and stats')
+    version_parser.set_defaults(func=cmd_version)
 
     args = parser.parse_args()
 
