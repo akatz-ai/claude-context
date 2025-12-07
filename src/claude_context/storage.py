@@ -342,6 +342,7 @@ class ContextStorage:
         Args:
             context_path: Path to context file. Can be:
                 - Full path from list: "shared/plans/foo.md" or "branches/main/notes/bar.md"
+                - Direct path: "session/foo.md" (top-level directories)
                 - Relative path: "plans/foo.md" (uses shared flag to determine location)
             shared: If True and path doesn't start with shared/branches, look in shared/
         """
@@ -349,14 +350,17 @@ class ContextStorage:
 
         # Auto-detect scope from path prefix
         if context_path.startswith('shared/'):
-            # Full path to shared doc
             path = self.project_dir / context_path
         elif context_path.startswith('branches/'):
-            # Full path to branch doc
             path = self.project_dir / context_path
         else:
-            # Relative path - use shared flag
-            path = self._resolve_path(context_path, shared)
+            # Try direct path first (handles top-level dirs like session/)
+            direct_path = self.project_dir / context_path
+            if direct_path.exists():
+                path = direct_path
+            else:
+                # Fall back to shared/branch resolution
+                path = self._resolve_path(context_path, shared)
 
         if not path.exists():
             raise FileNotFoundError(f"Context not found: {context_path}")
@@ -415,10 +419,8 @@ class ContextStorage:
         category = get_category_for_type(result.doc_type)
 
         if scope == 'shared':
-            context_path = f"{category}/{result.suggested_filename}"
             path = self._get_shared_dir() / category / result.suggested_filename
         else:
-            context_path = f"{category}/{result.suggested_filename}"
             path = self._get_branch_dir() / category / result.suggested_filename
 
         # Ensure directory exists
@@ -427,7 +429,7 @@ class ContextStorage:
         # Write the file
         path.write_text(content)
 
-        # Update index with classification metadata
+        # Update index - rel_path is the canonical identifier
         rel_path = str(path.relative_to(self.project_dir))
         doc_id = self.index.index_document(rel_path, content, self.project_dir)
 
@@ -450,7 +452,7 @@ class ContextStorage:
         # Auto-commit
         self._auto_commit(f"Add {result.doc_type}: {result.suggested_filename}")
 
-        return context_path, result, assigned_chain_id
+        return rel_path, result, assigned_chain_id
 
     def get_info(self) -> dict:
         """Get information about the current context storage."""

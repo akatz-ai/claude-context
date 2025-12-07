@@ -282,7 +282,7 @@ class ContextIndex:
         """Get document by filename or ID (tries both).
 
         Args:
-            identifier: Either a document ID (UUID) or filename
+            identifier: Either a document ID (UUID), full path, or short path
 
         Returns:
             Document dict or None
@@ -293,10 +293,18 @@ class ContextIndex:
             if doc:
                 return doc
 
-        # Try as filename
+        # Try as exact filename
         doc = self.get_document_by_filename(identifier)
         if doc:
             return doc
+
+        # Try with branch/shared prefixes (handles short paths from ctx list)
+        from .project import get_current_branch, sanitize_branch_name
+        branch = sanitize_branch_name(get_current_branch())
+        for prefix in [f"branches/{branch}/", "shared/"]:
+            doc = self.get_document_by_filename(prefix + identifier)
+            if doc:
+                return doc
 
         # Try partial ID match
         cursor = self.conn.execute(
