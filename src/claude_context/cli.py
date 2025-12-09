@@ -198,15 +198,20 @@ def cmd_save(args):
                 else:
                     print(f"Warning: Chain not found: {chain_id_arg}", file=sys.stderr)
 
-            saved_path, result, chain_id = storage.write_context_auto(
+            saved_path, result, chain_id, doc_id = storage.write_context_auto(
                 content,
                 filename_hint=getattr(args, 'path', None),
                 force_shared=force_shared,
                 chain_id=resolved_chain_id,
             )
 
+            # Generate ctx:// URI
+            from .git_integration import create_ctx_uri
+            uri = create_ctx_uri(storage.project_id, doc_id=doc_id)
+
             print(f"✓ Auto-classified and saved:")
             print(f"  Path: {saved_path}")
+            print(f"  URI: {uri}")
             print(f"  Type: {result.doc_type} (confidence: {result.confidence:.0%})")
             print(f"  Scope: {result.scope}")
             if result.tags:
@@ -499,7 +504,7 @@ def cmd_chain_show(args):
 
 
 def cmd_continue(args):
-    """Get the latest document in a chain for continuation."""
+    """Get the latest document in a chain for continuation, or fall back to most recent."""
     try:
         storage = ContextStorage()
 
@@ -521,27 +526,38 @@ def cmd_continue(args):
             if matching:
                 chain_id = matching[0].chain_id
 
-        # Get latest document
+        # Get latest document in chain
         doc = storage.chains.get_latest_in_chain(chain_id=chain_id, tags=tags)
+        from_chain = True
+
+        # Fall back to most recent document on current branch if no chains
+        if not doc and not chain_id:
+            from .project import get_current_branch, sanitize_branch_name
+            branch = sanitize_branch_name(get_current_branch())
+            results = storage.index.list_documents(branch=branch, status='active', limit=1)
+            if results:
+                doc = results[0]
+                from_chain = False
 
         if not doc:
             if chain_id:
                 print("No documents found in chain", file=sys.stderr)
             elif tags:
-                print(f"No chained documents found with tags: {', '.join(tags)}", file=sys.stderr)
+                print(f"No documents found with tags: {', '.join(tags)}", file=sys.stderr)
             else:
-                print("No chained documents found", file=sys.stderr)
+                print("No documents found", file=sys.stderr)
             return 1
 
         if args.path_only:
             print(doc.filename)
         else:
-            print(f"Continue from: {doc.filename}")
+            label = "Continue from" if from_chain else "Latest"
+            print(f"{label}: {doc.filename}")
             if doc.title:
                 print(f"Title: {doc.title}")
-            if doc.summary:
+            if hasattr(doc, 'summary') and doc.summary:
                 print(f"Summary: {doc.summary[:100]}...")
-            if doc.created_at:
+            if hasattr(doc, 'created_at') and doc.created_at:
                 print(f"Created: {doc.created_at[:10]}")
 
         return 0
@@ -608,8 +624,13 @@ def cmd_last(args):
         # Ensure index is fresh
         storage.index.ensure_fresh(storage.project_dir)
 
+        # Default to current branch unless --all specified
+        from .project import get_current_branch, sanitize_branch_name
+        branch = None if getattr(args, 'all', False) else sanitize_branch_name(get_current_branch())
+
         results = storage.index.list_documents(
             doc_type=args.type,
+            branch=branch,
             status='active',
             limit=1
         )
@@ -1088,6 +1109,7 @@ def main():
     # last command (new in v2)
     last_parser = subparsers.add_parser('last', help='Get the most recent document')
     last_parser.add_argument('--type', '-t', help='Filter by document type')
+    last_parser.add_argument('--all', '-a', action='store_true', help='Search all branches (default: current branch only)')
     last_parser.add_argument('--path-only', '-p', action='store_true', help='Output only the path (for scripting)')
     last_parser.set_defaults(func=cmd_last)
 

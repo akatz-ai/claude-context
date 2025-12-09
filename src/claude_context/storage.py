@@ -387,7 +387,7 @@ class ContextStorage:
         force_shared: Optional[bool] = None,
         chain_id: Optional[str] = None,
         auto_chain: bool = True,
-    ) -> tuple[str, "ClassificationResult", Optional[str]]:
+    ) -> tuple[str, "ClassificationResult", Optional[str], str]:
         """
         Auto-classify and save content.
 
@@ -399,7 +399,7 @@ class ContextStorage:
             auto_chain: If True, try to infer chain from content references
 
         Returns:
-            Tuple of (saved_path, classification_result, chain_id or None)
+            Tuple of (saved_path, classification_result, chain_id or None, doc_id)
         """
         from .classifier import classify_document, ClassificationResult
 
@@ -452,7 +452,7 @@ class ContextStorage:
         # Auto-commit
         self._auto_commit(f"Add {result.doc_type}: {result.suggested_filename}")
 
-        return rel_path, result, assigned_chain_id
+        return rel_path, result, assigned_chain_id, doc_id
 
     def get_info(self) -> dict:
         """Get information about the current context storage."""
